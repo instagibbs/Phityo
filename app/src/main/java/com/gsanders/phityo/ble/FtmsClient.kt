@@ -93,6 +93,14 @@ class FtmsClient(
     private val _features = MutableStateFlow<MachineFeatures?>(null)
     val features: StateFlow<MachineFeatures?> = _features.asStateFlow()
 
+    /**
+     * Vendor-protocol state byte from the 0x51 poll response:
+     * 0x00 idle, 0x02 countdown, 0x03 running, 0x04 stopping/cooling.
+     * Defaults to 0 (idle) before we've received a poll.
+     */
+    private val _vendorState = MutableStateFlow(0)
+    val vendorState: StateFlow<Int> = _vendorState.asStateFlow()
+
     private val adapter =
         (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
 
@@ -316,6 +324,28 @@ class FtmsClient(
 
     fun pause() = stop()
 
+    /**
+     * Start the belt and, once it finishes the firmware's 3-2-1 countdown
+     * and enters running state 0x03, push the user's previous target
+     * (speed in 0.1-mph units, incline in whole %). Sending the target
+     * during state 0x02 (countdown) is silently ignored on this firmware,
+     * so we have to wait for the transition.
+     */
+    fun startWithTargets(speedTenths: Int, inclinePct: Int) {
+        targetSpeedTenths = speedTenths.coerceIn(0, 255)
+        targetInclinePct = inclinePct.coerceIn(0, 255)
+        enqueueVendorWrite(ProprietaryControl.START_BODY)
+        scope.launch {
+            val deadline = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < deadline &&
+                _vendorState.value != 0x03
+            ) {
+                delay(100)
+            }
+            sendVendorTarget()
+        }
+    }
+
     /** Set target speed. Value is in km/h to match the rest of the codebase; converted to 0.1 mph for the vendor frame. */
     fun setSpeed(kmh: Double) {
         val mph = kmh / KM_PER_MILE
@@ -347,6 +377,9 @@ class FtmsClient(
         enqueueVendorWrite(
             ProprietaryControl.setTargetBody(targetSpeedTenths, targetInclinePct)
         )
+        val speed = targetSpeedTenths
+        val incline = targetInclinePct
+        scope.launch { settings.setLastTargets(speed, incline) }
     }
 
     private fun enqueueVendorWrite(body: ByteArray) {
@@ -392,6 +425,7 @@ class FtmsClient(
                 // assumption. Only do this before the user has issued a
                 // target of their own.
                 ProprietaryControl.parseStatus(body)?.let { s ->
+                    _vendorState.value = s.state
                     if (targetSpeedTenths == 7 && targetInclinePct == 0) {
                         targetSpeedTenths = s.speedMphTenths
                         targetInclinePct = s.inclinePct
@@ -442,6 +476,7 @@ class FtmsClient(
         vendorWrite = null
         targetSpeedTenths = 7
         targetInclinePct = 0
+        _vendorState.value = 0
 
         if (autoReconnect) {
             reconnectJob?.cancel()
