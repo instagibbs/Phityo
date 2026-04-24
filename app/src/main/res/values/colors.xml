@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cream background pulled from the treadmill artwork so the adaptive
+         icon blends with the character when the launcher applies a mask. -->
+    <color name="ic_launcher_background">#F2E7D5</color>
+</resources>
