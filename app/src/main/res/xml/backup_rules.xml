@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Used for Android < 12. -->
+    <include domain="database" path="phityo.db" />
+    <include domain="database" path="phityo.db-shm" />
+    <include domain="database" path="phityo.db-wal" />
+    <include domain="file" path="datastore/phityo_settings.preferences_pb" />
+</full-backup-content>
