@@ -29,7 +29,7 @@ class PhityoApp : Application() {
         settings = Settings(this)
         db = PhityoDb.get(this)
         client = FtmsClient(this, settings, appScope)
-        recorder = SessionRecorder(client, db.sessionDao(), settings, appScope)
+        recorder = SessionRecorder(this, client, db.sessionDao(), settings, appScope)
         recorder.start()
         // Note: we do NOT auto-connect here because BLE permissions aren't
         // granted yet on first launch. MainActivity kicks off the connection

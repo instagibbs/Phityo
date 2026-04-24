@@ -1,13 +1,17 @@
 package com.gsanders.phityo.session
 
+import android.content.Context
+import android.widget.Toast
 import com.gsanders.phityo.ble.FtmsClient
 import com.gsanders.phityo.ble.TreadmillData
 import com.gsanders.phityo.data.Session
 import com.gsanders.phityo.data.SessionDao
 import com.gsanders.phityo.data.Settings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Watches the live TreadmillData stream and persists a [Session] row whenever
@@ -23,6 +27,7 @@ import kotlinx.coroutines.launch
  * integrating ourselves.
  */
 class SessionRecorder(
+    private val ctx: Context,
     private val client: FtmsClient,
     private val dao: SessionDao,
     private val settings: Settings,
@@ -117,6 +122,20 @@ class SessionRecorder(
         // displays and what's reported via FTMS, just like we already do for
         // calories.
         val durationSec = a.lastElapsedSec.coerceAtLeast(1)
+
+        // Drop sub-minute sessions so the history list isn't cluttered with
+        // stray step-ons; surface a toast so the user knows it wasn't saved.
+        if (durationSec < MIN_SAVE_SECONDS) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    ctx,
+                    "Short session (${durationSec}s) — not saved",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            return
+        }
+
         val distanceM = a.lastDistanceM.coerceAtLeast(0)
         val avgSpeed = if (a.samples > 0) a.speedSum / a.samples else 0.0
         val avgIncline = if (a.samples > 0) a.inclineSum / a.samples else 0.0
@@ -144,5 +163,6 @@ class SessionRecorder(
 
     companion object {
         private const val IDLE_END_SECONDS = 15
+        private const val MIN_SAVE_SECONDS = 60
     }
 }
