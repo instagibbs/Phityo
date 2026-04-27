@@ -1,12 +1,16 @@
 package com.gsanders.phityo
 
 import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -39,6 +43,7 @@ import com.gsanders.phityo.ble.ConnectionState
 import com.gsanders.phityo.ui.HistoryScreen
 import com.gsanders.phityo.ui.LiveScreen
 import com.gsanders.phityo.ui.SettingsScreen
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -59,18 +64,43 @@ class MainActivity : ComponentActivity() {
         val permLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { results ->
-            val granted = results.values.all { it }
-            if (granted) autoConnectOnStartup(app)
+            val blePerms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            } else {
+                listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            // First-launch path: lifecycle observer's onStart already ran
+            // before the user accepted, so trigger the connect here.
+            if (blePerms.all { results[it] == true }) autoConnectOnStartup(app)
         }
-        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT,
-            )
-        } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
+        val perms = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            } else {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
         permLauncher.launch(perms)
+
+        // Connection follows activity foreground: connect on every START,
+        // and on STOP, watch for idle and disconnect once the workout has
+        // truly settled (vendor state back to 0x00 / speed back to 0). Lets
+        // the treadmill enter standby whenever the user isn't looking.
+        lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                app.idleDisconnectJob?.cancel()
+                app.idleDisconnectJob = null
+                if (hasBlePerms()) autoConnectOnStartup(app)
+            }
+            override fun onStop(owner: LifecycleOwner) {
+                if (isChangingConfigurations) return
+                scheduleDisconnectIfIdle(app)
+            }
+        })
 
         setContent {
             MaterialTheme {
@@ -79,9 +109,54 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun hasBlePerms(): Boolean {
+        val needed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        return needed.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun scheduleDisconnectIfIdle(app: PhityoApp) {
+        app.idleDisconnectJob?.cancel()
+        app.idleDisconnectJob = app.appScope.launch {
+            var idleSinceMs: Long? = null
+            while (true) {
+                if (app.client.state.value != ConnectionState.CONNECTED) return@launch
+                val speed = app.client.data.value.speedKmh ?: 0.0
+                val vState = app.client.vendorState.value
+                // Cooldown (0x04) is excluded from "running" — belt is at 0,
+                // we just need to wait out the firmware's summary screen.
+                val running = speed > 0.0 || vState == 0x02 || vState == 0x03
+                val now = System.currentTimeMillis()
+                if (running) {
+                    idleSinceMs = null
+                } else {
+                    val mark = idleSinceMs
+                    if (mark == null) {
+                        idleSinceMs = now
+                    } else if (now - mark >= IDLE_DISCONNECT_MS) {
+                        app.client.disconnect()
+                        return@launch
+                    }
+                }
+                delay(IDLE_POLL_MS)
+            }
+        }
+    }
+
+    companion object {
+        private const val IDLE_DISCONNECT_MS = 10_000L
+        private const val IDLE_POLL_MS = 1_000L
+    }
+
     private fun autoConnectOnStartup(app: PhityoApp) {
         app.appScope.launch {
             if (app.client.state.value != ConnectionState.DISCONNECTED) return@launch
+            if (!app.settings.autoReconnectEnabled.first()) return@launch
             val savedMac = app.settings.lastDeviceMac.first()
             if (savedMac != null) {
                 app.client.autoReconnectIfKnown()

@@ -44,6 +44,7 @@ private val VENDOR_WRITE:    UUID = UUID.fromString("0000fff2-0000-1000-8000-008
 
 private const val KM_PER_MILE = 1.609344
 private const val VENDOR_POLL_INTERVAL_MS = 500L
+private const val VENDOR_POLL_DISABLED_RECHECK_MS = 2_000L
 
 // Target Setting Features bitmap (second uint32 of 0x2ACC).
 private const val TARGET_SPEED_BIT   = 1 shl 0
@@ -406,8 +407,12 @@ class FtmsClient(
             delay(300)
             while (true) {
                 if (gatt == null || vendorWrite == null) return@launch
-                enqueueVendorWrite(ProprietaryControl.POLL_BODY)
-                delay(VENDOR_POLL_INTERVAL_MS)
+                if (settings.vendorPollEnabled.first()) {
+                    enqueueVendorWrite(ProprietaryControl.POLL_BODY)
+                    delay(VENDOR_POLL_INTERVAL_MS)
+                } else {
+                    delay(VENDOR_POLL_DISABLED_RECHECK_MS)
+                }
             }
         }
     }
@@ -481,12 +486,14 @@ class FtmsClient(
         if (autoReconnect) {
             reconnectJob?.cancel()
             reconnectJob = scope.launch {
+                if (!settings.autoReconnectEnabled.first()) return@launch
                 val mac = _deviceMac.value ?: settings.lastDeviceMac.first()
                 if (mac != null) {
                     var delayMs = 2_000L
                     while (autoReconnect && _state.value == ConnectionState.DISCONNECTED) {
                         delay(delayMs)
                         if (!autoReconnect) return@launch
+                        if (!settings.autoReconnectEnabled.first()) return@launch
                         connectByMac(mac)
                         delayMs = (delayMs * 2).coerceAtMost(30_000L)
                         delay(5_000L)

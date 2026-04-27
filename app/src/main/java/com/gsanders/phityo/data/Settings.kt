@@ -1,6 +1,7 @@
 package com.gsanders.phityo.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -31,6 +32,12 @@ class Settings(private val ctx: Context) {
     val lastSpeedTenths: Flow<Int?> = ctx.dataStore.data.map { it[KEY_LAST_SPEED_TENTHS] }
     val lastInclinePct:  Flow<Int?> = ctx.dataStore.data.map { it[KEY_LAST_INCLINE_PCT] }
 
+    val vendorPollEnabled: Flow<Boolean> =
+        ctx.dataStore.data.map { it[KEY_VENDOR_POLL_ENABLED] ?: true }
+
+    val autoReconnectEnabled: Flow<Boolean> =
+        ctx.dataStore.data.map { it[KEY_AUTO_RECONNECT_ENABLED] ?: true }
+
     suspend fun setHeightCm(cm: Int) {
         ctx.dataStore.edit { it[KEY_HEIGHT_CM] = cm.coerceIn(120, 230) }
     }
@@ -52,12 +59,22 @@ class Settings(private val ctx: Context) {
         }
     }
 
+    suspend fun setVendorPollEnabled(enabled: Boolean) {
+        ctx.dataStore.edit { it[KEY_VENDOR_POLL_ENABLED] = enabled }
+    }
+
+    suspend fun setAutoReconnectEnabled(enabled: Boolean) {
+        ctx.dataStore.edit { it[KEY_AUTO_RECONNECT_ENABLED] = enabled }
+    }
+
     companion object {
         private val KEY_HEIGHT_CM         = intPreferencesKey("height_cm")
         private val KEY_LAST_MAC          = stringPreferencesKey("last_device_mac")
         private val KEY_UNITS             = stringPreferencesKey("units")
         private val KEY_LAST_SPEED_TENTHS = intPreferencesKey("last_speed_tenths")
         private val KEY_LAST_INCLINE_PCT  = intPreferencesKey("last_incline_pct")
+        private val KEY_VENDOR_POLL_ENABLED = booleanPreferencesKey("vendor_poll_enabled")
+        private val KEY_AUTO_RECONNECT_ENABLED = booleanPreferencesKey("auto_reconnect_enabled")
         const val DEFAULT_HEIGHT_CM = 175
 
         /** Walking stride length in meters. Rough model: ~0.414 × height. */

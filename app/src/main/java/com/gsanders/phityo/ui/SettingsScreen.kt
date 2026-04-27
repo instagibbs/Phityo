@@ -16,6 +16,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,6 +48,8 @@ fun SettingsScreen(
     val heightCm by settings.heightCm.collectAsState(initial = Settings.DEFAULT_HEIGHT_CM)
     val lastMac by settings.lastDeviceMac.collectAsState(initial = null)
     val units by settings.units.collectAsState(initial = UnitSystem.Imperial)
+    val vendorPollEnabled by settings.vendorPollEnabled.collectAsState(initial = true)
+    val autoReconnectEnabled by settings.autoReconnectEnabled.collectAsState(initial = true)
     val deviceName by client.deviceName.collectAsStateWithLifecycle()
     val currentMac by client.deviceMac.collectAsStateWithLifecycle()
     val state by client.state.collectAsStateWithLifecycle()
@@ -127,6 +130,10 @@ fun SettingsScreen(
                 currentMac?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 HorizontalDivider()
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { client.autoReconnectIfKnown() },
+                        enabled = state == ConnectionState.DISCONNECTED && lastMac != null,
+                    ) { Text("Connect") }
                     OutlinedButton(onClick = { client.disconnect() }) { Text("Disconnect") }
                     OutlinedButton(onClick = { client.forget() }) { Text("Forget") }
                 }
@@ -135,6 +142,57 @@ fun SettingsScreen(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+
+        Card {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Debug", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Vendor poll (0x51)", fontSize = 16.sp)
+                        Text(
+                            "Off = quiet idle connection, lets the treadmill enter standby. " +
+                                "Speed/incline control still works; on-treadmill state may stop refreshing.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = vendorPollEnabled,
+                        onCheckedChange = { v ->
+                            coroutineScope.launch { settings.setVendorPollEnabled(v) }
+                        },
+                    )
+                }
+                HorizontalDivider()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Auto-reconnect", fontSize = 16.sp)
+                        Text(
+                            "Off = stop trying to reconnect after a disconnect. " +
+                                "Use Disconnect (or wait for the treadmill to drop the link) " +
+                                "and the app will leave it alone until you reopen / hit Connect.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = autoReconnectEnabled,
+                        onCheckedChange = { v ->
+                            coroutineScope.launch { settings.setAutoReconnectEnabled(v) }
+                        },
+                    )
+                }
             }
         }
 
